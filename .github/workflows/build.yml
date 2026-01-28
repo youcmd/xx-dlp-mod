@@ -23,7 +23,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.12'
+          python-version: '3.10'
 
       - name: Install build dependencies
         shell: pwsh
@@ -32,7 +32,6 @@ jobs:
           python -m pip install pyinstaller
           python -m pip install --force-reinstall "yt-dlp[default] @ https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz"
           
-
       - name: Patch _video.py
         shell: bash
         run: |
@@ -47,11 +46,11 @@ jobs:
             Write-Host "Expected binary not found in dist\"; Get-ChildItem dist -Recurse; exit 1
           }
           mkdir ..\..\release_artifacts
-          Copy-Item dist\yt-dlp.exe ..\..\release_artifacts\yt-dlp-windows.exe -Force
+          Copy-Item dist\yt-dlp.exe ..\..\release_artifacts\yt-dlp-mod.exe -Force
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: build-binary-windows
           path: release_artifacts/*
-          retention-days: 7
+          retention-days: 14
