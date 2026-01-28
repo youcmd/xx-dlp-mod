@@ -54,13 +54,16 @@ jobs:
           if (-not (Test-Path dist\yt-dlp.exe)) {
             Write-Host "Expected binary not found in dist"; Get-ChildItem dist -Recurse; exit 1
           }
-          # Ensure release dir
           mkdir ..\..\release_artifacts -ErrorAction SilentlyContinue
-          # Run UPX for extra compression if available
+          # Try UPX but do not fail the job if UPX cannot pack (e.g., GUARD_CF)
           if (Get-Command upx -ErrorAction SilentlyContinue) {
-            upx --best --lzma dist\yt-dlp.exe
+            try {
+              upx --best --lzma dist\yt-dlp.exe
+            } catch {
+              Write-Host "UPX compression failed or not supported for this PE (likely GUARD_CF). Skipping UPX to avoid breaking the binary."
+            }
           } else {
-            Write-Host "UPX not found in PATH; binary not compressed with UPX"
+            Write-Host "UPX not found in PATH; skipping compression"
           }
           Copy-Item dist\yt-dlp.exe ..\..\release_artifacts\yt-dlp-mod.exe -Force
 
