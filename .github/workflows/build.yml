@@ -30,20 +30,20 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel hatchling
           python -m pip install pyinstaller
-          python -m pip install --force-reinstall "yt-dlp[default] @ https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz"
-          
+
       - name: Patch _video.py
         shell: bash
         run: |
           sed -i "/if[[:space:]]\+fmt_stream\.get('targetDurationSec'):/,/^[[:space:]]*continue/s/^[[:space:]]*/&#/" src/yt-dlp/yt_dlp/extractor/youtube/_video.py
-          
+          python -m pip install --upgrade --force-reinstall ./src/yt-dlp[default]
+
       - name: Build binary
         shell: pwsh
         run: |
           cd src/yt-dlp
           pyinstaller --onefile --name yt-dlp yt_dlp/__main__.py
           if (-not (Test-Path dist\yt-dlp.exe)) {
-            Write-Host "Expected binary not found in dist\"; Get-ChildItem dist -Recurse; exit 1
+            Write-Host "Expected binary not found in dist"; Get-ChildItem dist -Recurse; exit 1
           }
           mkdir ..\..\release_artifacts
           Copy-Item dist\yt-dlp.exe ..\..\release_artifacts\yt-dlp-mod.exe -Force
@@ -52,5 +52,52 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-binary-windows
+          path: release_artifacts/*
+          retention-days: 14
+
+  build-linux:
+    name: Build Binary and Upload Artifact
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download source tarball
+        shell: bash
+        run: |
+          curl -L -o yt-dlp.tar.gz "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz"
+          mkdir -p src
+          tar -xzf yt-dlp.tar.gz -C src
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip setuptools wheel hatchling
+          python -m pip install pyinstaller
+
+      - name: Patch _video.py
+        shell: bash
+        run: |
+          sed -i "/if[[:space:]]\+fmt_stream\.get('targetDurationSec'):/,/^[[:space:]]*continue/s/^[[:space:]]*/&#/" src/yt-dlp/yt_dlp/extractor/youtube/_video.py
+          python -m pip install --upgrade --force-reinstall ./src/yt-dlp[default]
+
+      - name: Build binary
+        shell: bash
+        run: |
+          set -e
+          cd src/yt-dlp
+          pyinstaller --onefile --name yt-dlp yt_dlp/__main__.py
+          if [ ! -f dist/yt-dlp ]; then
+            echo "Expected binary not found in dist"; ls -R dist || true; exit 1
+          fi
+          mkdir -p ../../release_artifacts
+          cp -f dist/yt-dlp ../../release_artifacts/yt-dlp-mod
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-binary-linux
           path: release_artifacts/*
           retention-days: 14
