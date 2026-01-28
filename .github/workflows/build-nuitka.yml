@@ -1,5 +1,4 @@
 name: Build Binary with Nuitka and Upload Artifact
-
 on:
   workflow_dispatch:
 
@@ -25,37 +24,52 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install build dependencies
+      - name: Install build tooling and install local patched package
         shell: pwsh
         run: |
-          python -m pip install --upgrade pip setuptools wheel hatchling
-          python -m pip install --force-reinstall "yt-dlp[default] @ https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz"
+          python -m pip install --upgrade pip setuptools wheel
+          # Install Nuitka so the action can use the same runtime tooling if needed
+          python -m pip install --upgrade nuitka
+          # Install the local (patched) source so Nuitka sees the patched modules
+          # python -m pip install ./src/yt-dlp[default]
 
       - name: Patch _video.py
         shell: bash
         run: |
           sed -i "/if[[:space:]]\+fmt_stream\.get('targetDurationSec'):/,/^[[:space:]]*continue/s/^[[:space:]]*/&#/" src/yt-dlp/yt_dlp/extractor/youtube/_video.py
+          # Reinstall local package to ensure patched files are used by the build
+          python -m pip install --upgrade --force-reinstall ./src/yt-dlp[default]
 
       - name: Build with Nuitka Action
         uses: Nuitka/Nuitka-Action@main
         with:
-          python-version: '3.10'
-          # Path to the entry point inside the workspace after extraction
-          entry-point: 'src/yt-dlp/yt_dlp/__main__.py'
-          # Pass any Nuitka flags you need; --standalone is recommended for self-contained builds
-          nuitka-args: '--standalone --follow-imports --remove-output'
-          # Optional: name for the produced executable (action may place it under dist/)
-          output-name: 'yt-dlp-nuitka.exe'
+          # Build mode: standalone produces a self-contained folder
+          mode: 'standalone'
+          # Path to the script to compile (relative to workspace)
+          script-name: 'src/yt-dlp/yt_dlp/__main__.py'
+          # Where the action should place build outputs
+          output-dir: 'dist'
+          # Name for the produced executable file
+          output-file: 'yt-dlp-nuitka.exe'
+          # Include the package so Nuitka bundles yt_dlp package contents
+          include-package: 'yt_dlp'
+          # Follow imports and include package data
+          include-package-data: 'true'
+          # Disable console window for a console app set to false (adjust as needed)
+          disable-console: 'false'
 
       - name: Locate and copy Nuitka output to release_artifacts
         shell: pwsh
         run: |
-          # Clean/create artifacts folder
           if (Test-Path release_artifacts) { Remove-Item -Recurse -Force release_artifacts }
           New-Item -ItemType Directory -Path release_artifacts | Out-Null
 
-          # Search for the produced exe (Nuitka may place it under dist/<module>.dist or dist/)
-          $exe = Get-ChildItem -Path . -Recurse -Filter "yt-dlp*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          # Nuitka Action writes to output-dir; search for the exe
+          $exe = Get-ChildItem -Path dist -Recurse -Filter "yt-dlp-nuitka.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) {
+            # Fallback: find any yt-dlp exe produced
+            $exe = Get-ChildItem -Path . -Recurse -Filter "yt-dlp*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
           if (-not $exe) {
             Write-Host "Expected Nuitka binary not found; listing dist/ for debugging"
             if (Test-Path dist) { Get-ChildItem dist -Recurse | Write-Host }
