@@ -1,0 +1,153 @@
+name: Build Binary and Upload Artifact (small)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Build Windows binary and upload
+    runs-on: windows-latest
+    steps:
+      - name: Download source tarball
+        shell: pwsh
+        run: |
+          Invoke-WebRequest `
+            -Uri "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz" `
+            -OutFile yt-dlp.tar.gz
+          mkdir src
+          tar -xzf yt-dlp.tar.gz -C src
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install build dependencies and UPX
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip setuptools wheel hatchling
+          python -m pip install pyinstaller
+          choco install upx -y || Write-Host "choco not available; ensure upx is in PATH"
+
+      - name: Patch _video.py
+        shell: bash
+        run: |
+          sed -i "/if[[:space:]]\+fmt_stream\.get('targetDurationSec'):/,/^[[:space:]]*continue/s/^[[:space:]]*/&#/" src/yt-dlp/yt_dlp/extractor/youtube/_video.py
+          python -m pip install --upgrade --force-reinstall ./src/yt-dlp[default]
+
+      - name: Build binary (Windows) with size optimizations
+        shell: pwsh
+        run: |
+          cd src/yt-dlp
+          pyinstaller --onefile --name yt-dlp `
+            --clean `
+            --noconfirm `
+            --exclude-module tkinter `
+            --exclude-module tests `
+            --exclude-module pytest `
+            --exclude-module distutils `
+            --exclude-module setuptools `
+            yt_dlp/__main__.py
+          if (-not (Test-Path dist\yt-dlp.exe)) {
+            Write-Host "Expected binary not found in dist"; Get-ChildItem dist -Recurse; exit 1
+          }
+          # Ensure release dir
+          mkdir ..\..\release_artifacts -ErrorAction SilentlyContinue
+          # Run UPX for extra compression if available
+          if (Get-Command upx -ErrorAction SilentlyContinue) {
+            upx --best --lzma dist\yt-dlp.exe
+          } else {
+            Write-Host "UPX not found in PATH; binary not compressed with UPX"
+          }
+          Copy-Item dist\yt-dlp.exe ..\..\release_artifacts\yt-dlp-mod.exe -Force
+
+      - name: Analyze Windows artifact
+        shell: pwsh
+        run: |
+          Get-ChildItem release_artifacts -Recurse | Select-Object Name,Length
+          Write-Host "Dist contents:"
+          & 7z l dist\yt-dlp.exe || Write-Host "7z not available to inspect onefile archive"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-binary-windows
+          path: release_artifacts/*
+          retention-days: 14
+
+  build-linux:
+    name: Build Linux binary and upload
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download source tarball
+        shell: bash
+        run: |
+          curl -L -o yt-dlp.tar.gz "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz"
+          mkdir -p src
+          tar -xzf yt-dlp.tar.gz -C src
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install build dependencies and UPX
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y upx-ucl p7zip-full
+          python -m pip install --upgrade pip setuptools wheel hatchling
+          python -m pip install pyinstaller
+
+      - name: Patch _video.py
+        shell: bash
+        run: |
+          sed -i "/if[[:space:]]\+fmt_stream\.get('targetDurationSec'):/,/^[[:space:]]*continue/s/^[[:space:]]*/&#/" src/yt-dlp/yt_dlp/extractor/youtube/_video.py
+          python -m pip install --upgrade --force-reinstall ./src/yt-dlp[default]
+
+      - name: Build binary (Linux) with size optimizations
+        shell: bash
+        run: |
+          set -e
+          cd src/yt-dlp
+          pyinstaller --onefile --name yt-dlp \
+            --clean \
+            --strip \
+            --noconfirm \
+            --exclude-module tkinter --exclude-module tests --exclude-module pytest \
+            --exclude-module distutils --exclude-module setuptools \
+            yt_dlp/__main__.py
+          if [ ! -f dist/yt-dlp ]; then
+            echo "Expected binary not found in dist"; ls -R dist || true; exit 1
+          fi
+          mkdir -p ../../release_artifacts
+          # Run UPX for best compression
+          if command -v upx >/dev/null 2>&1; then
+            upx --best --lzma dist/yt-dlp
+          else
+            echo "UPX not available; skipping UPX compression"
+          fi
+          cp -f dist/yt-dlp ../../release_artifacts/yt-dlp-mod
+          # Strip again just in case
+          if command -v strip >/dev/null 2>&1; then
+            strip --strip-all ../../release_artifacts/yt-dlp-mod || true
+          fi
+
+      - name: Analyze Linux artifact
+        shell: bash
+        run: |
+          ls -lh release_artifacts
+          echo "Contents of the onefile archive (if p7zip can list it):"
+          7z l dist/yt-dlp || true
+          echo "Shared libs (ldd):"
+          ldd dist/yt-dlp || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-binary-linux
+          path: release_artifacts/*
+          retention-days: 14
