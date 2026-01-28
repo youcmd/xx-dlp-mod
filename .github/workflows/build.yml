@@ -1,0 +1,55 @@
+name: Build Binary and Upload Artifact
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Build Windows binary and upload
+    runs-on: windows-latest
+    steps:
+      - name: Download source tarball
+        shell: pwsh
+        run: |
+          Invoke-WebRequest `
+            -Uri "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz" `
+            -OutFile yt-dlp.tar.gz
+          mkdir src
+          tar -xzf yt-dlp.tar.gz -C src
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install pyinstaller
+
+      - name: Patch _video.py
+        shell: bash
+        run: |
+          sed -i "/if[[:space:]]\+fmt_stream\.get('targetDurationSec'):/,/^[[:space:]]*continue/s/^[[:space:]]*/&#/" src/yt-dlp/yt_dlp/extractor/youtube/_video.py
+
+      - name: Build binary
+        shell: pwsh
+        run: |
+          cd src/yt-dlp
+          python -m bundle.pyinstaller --onefile
+          if (-not (Test-Path dist\yt-dlp.exe)) {
+            Write-Host "Expected binary not found in dist\"; Get-ChildItem dist -Recurse; exit 1
+          }
+          mkdir ..\..\release_artifacts
+          Copy-Item dist\yt-dlp.exe ..\..\release_artifacts\yt-dlp-windows.exe -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-binary-windows
+          path: release_artifacts/*
+          retention-days: 7
