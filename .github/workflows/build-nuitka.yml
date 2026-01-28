@@ -1,0 +1,72 @@
+name: Build Binary with Nuitka and Upload Artifact
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Build Windows binary and upload (Nuitka-Action)
+    runs-on: windows-latest
+    steps:
+      - name: Download source tarball
+        shell: pwsh
+        run: |
+          Invoke-WebRequest `
+            -Uri "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz" `
+            -OutFile yt-dlp.tar.gz
+          mkdir src
+          tar -xzf yt-dlp.tar.gz -C src
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip setuptools wheel hatchling
+          python -m pip install --force-reinstall "yt-dlp[default] @ https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz"
+
+      - name: Patch _video.py
+        shell: bash
+        run: |
+          sed -i "/if[[:space:]]\+fmt_stream\.get('targetDurationSec'):/,/^[[:space:]]*continue/s/^[[:space:]]*/&#/" src/yt-dlp/yt_dlp/extractor/youtube/_video.py
+
+      - name: Build with Nuitka Action
+        uses: Nuitka/Nuitka-Action@main
+        with:
+          python-version: '3.10'
+          # Path to the entry point inside the workspace after extraction
+          entry-point: 'src/yt-dlp/yt_dlp/__main__.py'
+          # Pass any Nuitka flags you need; --standalone is recommended for self-contained builds
+          nuitka-args: '--standalone --follow-imports --remove-output'
+          # Optional: name for the produced executable (action may place it under dist/)
+          output-name: 'yt-dlp-nuitka.exe'
+
+      - name: Locate and copy Nuitka output to release_artifacts
+        shell: pwsh
+        run: |
+          # Clean/create artifacts folder
+          if (Test-Path release_artifacts) { Remove-Item -Recurse -Force release_artifacts }
+          New-Item -ItemType Directory -Path release_artifacts | Out-Null
+
+          # Search for the produced exe (Nuitka may place it under dist/<module>.dist or dist/)
+          $exe = Get-ChildItem -Path . -Recurse -Filter "yt-dlp*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) {
+            Write-Host "Expected Nuitka binary not found; listing dist/ for debugging"
+            if (Test-Path dist) { Get-ChildItem dist -Recurse | Write-Host }
+            Get-ChildItem -Recurse | Where-Object { $_.Extension -eq '.exe' } | Select-Object -First 20 | Write-Host
+            exit 1
+          }
+          Copy-Item $exe.FullName release_artifacts\yt-dlp-nuitka.exe -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-binary-windows
+          path: release_artifacts/*
+          retention-days: 14
