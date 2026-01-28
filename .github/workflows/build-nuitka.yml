@@ -36,19 +36,14 @@ jobs:
           sed -i "/if[[:space:]]\+fmt_stream\.get('targetDurationSec'):/,/^[[:space:]]*continue/s/^[[:space:]]*/&#/" src/yt-dlp/yt_dlp/extractor/youtube/_video.py
           # Reinstall local package to ensure patched files are used by the build
           python -m pip install --upgrade --force-reinstall ./src/yt-dlp[default]
-          
       - name: Build with Nuitka Action
         uses: Nuitka/Nuitka-Action@main
         with:
           mode: 'standalone'
-          # Use module mode so Nuitka runs the package as a module (-m)
-          python-flag: '-m'
-          # Give the package/module name, not the __main__.py path
-          script-name: 'yt_dlp'
+          script-name: 'src/yt-dlp/yt_dlp'
           output-dir: 'dist'
           output-file: 'yt-dlp-nuitka.exe'
           include-package: 'yt_dlp'
-          # If you need package data files included, list the package(s) explicitly
           include-package-data: 'yt_dlp'
           disable-console: 'false'
 
